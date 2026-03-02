@@ -101,7 +101,7 @@ const Nav = () => {
           >
             <Share2 className="h-7 w-7 text-blue-600 transition-transform group-hover:scale-105" />
             <span className="text-xl font-extrabold tracking-tight text-gray-900">
-              FileShare
+              TabShare
             </span>
           </Link>
 
