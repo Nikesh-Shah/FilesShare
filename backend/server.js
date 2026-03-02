@@ -84,6 +84,12 @@ app.use(express.raw({ type: 'application/octet-stream', limit: '50mb' }));
 app.use('/api/auth', authRoutes);
 app.use('/api/fileshare', fileShareRoutes);
 
+// Health check / keep-alive route for cron jobs
+app.get('/', (req, res) => {
+  res.json({ status: 'ok', uptime: process.uptime(), timestamp: new Date().toISOString() });
+});
+app.get('/ping', (req, res) => res.send('pong'));
+
 // Serve static files from the frontend build
 
 // Connect to MongoDB (non-fatal — server starts even if DB is unavailable)
