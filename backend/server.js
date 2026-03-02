@@ -19,14 +19,6 @@ const __dirname = path.dirname(__filename);
 dotenv.config();
 
 const app = express();
-// Set Content Security Policy header to allow scripts, blobs, and connections
-app.use((req, res, next) => {
-  res.setHeader(
-    'Content-Security-Policy',
-    "default-src *; script-src * 'unsafe-inline' 'unsafe-eval'; connect-src *; img-src * data: blob:;"
-  );
-  next();
-});
 
 // Create directories for file uploads
 const uploadsDir = path.join(__dirname, 'uploads');
