@@ -13,7 +13,7 @@ const Footer = () => (
 				<div className="flex flex-wrap justify-center sm:justify-start space-x-0 sm:space-x-4 w-full sm:w-auto">
 					<a href="/" className="px-3 py-1 m-1 rounded hover:bg-blue-800 hover:text-white transition font-medium">Home</a>
 					<a href="/faq" className="px-3 py-1 m-1 rounded hover:bg-blue-800 hover:text-white transition font-medium">FAQ</a>
-					<a href="https://github.com/Nikesh-Shah/FileSharing" target="_blank" rel="noopener noreferrer" className="px-3 py-1 m-1 rounded hover:bg-blue-800 hover:text-white transition font-medium">GitHub</a>
+					<a href="https://github.com/Nikesh-Shah" target="_blank" rel="noopener noreferrer" className="px-3 py-1 m-1 rounded hover:bg-blue-800 hover:text-white transition font-medium">GitHub</a>
 				</div>
 				<div className="text-xs text-gray-300 text-center sm:text-right w-full sm:w-auto">
 					&copy; {new Date().getFullYear()} TabShare. All rights reserved.
