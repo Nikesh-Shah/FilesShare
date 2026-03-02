@@ -257,18 +257,33 @@ const Receiver = () => {
   const setupConnection = () => {
     console.log('Setting up WebRTC connection for room:', roomId);
     
-    // Configure WebRTC with optimized settings for better performance
+    // Configure WebRTC with STUN + TURN for reliable NAT traversal in production
     const rtcConfig = {
       iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
         { urls: 'stun:stun1.l.google.com:19302' },
         { urls: 'stun:stun2.l.google.com:19302' },
         { urls: 'stun:stun3.l.google.com:19302' },
-        { urls: 'stun:stun4.l.google.com:19302' }
+        { urls: 'stun:stun4.l.google.com:19302' },
+        // Free TURN relay — required for symmetric NAT (mobile / corporate networks)
+        {
+          urls: 'turn:openrelay.metered.ca:80',
+          username: 'openrelayproject',
+          credential: 'openrelayproject'
+        },
+        {
+          urls: 'turn:openrelay.metered.ca:443',
+          username: 'openrelayproject',
+          credential: 'openrelayproject'
+        },
+        {
+          urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+          username: 'openrelayproject',
+          credential: 'openrelayproject'
+        }
       ],
-      // Optimized for maximum performance
       iceCandidatePoolSize: 10,
-      bundlePolicy: 'max-bundle', // Better performance
+      bundlePolicy: 'max-bundle',
       rtcpMuxPolicy: 'require'
     };
     

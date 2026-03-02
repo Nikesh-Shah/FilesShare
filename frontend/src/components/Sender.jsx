@@ -367,7 +367,7 @@ const Sender = () => {
       setActiveShares(currentShares => {
         const shareInfo = currentShares.get(receiverRoomId);
         if (!shareInfo) { console.log(`No active share found for room ${receiverRoomId}`); return currentShares; }
-        const rtcConfig = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }], iceCandidatePoolSize: 0, bundlePolicy: 'max-bundle', rtcpMuxPolicy: 'require', iceTransportPolicy: 'all', sdpSemantics: 'unified-plan' };
+        const rtcConfig = { iceServers: [ { urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun1.l.google.com:19302' }, { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' }, { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' }, { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' } ], iceCandidatePoolSize: 0, bundlePolicy: 'max-bundle', rtcpMuxPolicy: 'require', iceTransportPolicy: 'all', sdpSemantics: 'unified-plan' };
     const peer = new RTCPeerConnection(rtcConfig);
   let dataChannel; let channelList = [];
   { const ch = peer.createDataChannel('fileTransfer', { ordered:true }); try { ch.bufferedAmountLowThreshold = 512 * 1024; } catch(_){} try { ch.binaryType = 'arraybuffer'; } catch(_){} channelList.push(ch); dataChannel = ch; }
