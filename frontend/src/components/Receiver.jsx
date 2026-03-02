@@ -76,22 +76,24 @@ const Receiver = () => {
     console.log('Receiver component mounted for roomId:', roomId);
     
     // Add socket connection debugging
-    socket.on('connect', () => {
+    const handleConnect = () => {
       console.log('Socket connected:', socket.id);
-    });
-    
-    socket.on('disconnect', () => {
+    };
+    const handleDisconnect = () => {
       console.log('Socket disconnected');
       setStatus('Disconnected from server. Reconnecting...');
-    });
-    
-    socket.on('reconnect', () => {
+    };
+    const handleReconnect = () => {
       console.log('Socket reconnected');
       setStatus('Reconnected. Setting up connection...');
       if (roomId) {
         setupConnection();
       }
-    });
+    };
+
+    socket.on('connect', handleConnect);
+    socket.on('disconnect', handleDisconnect);
+    socket.on('reconnect', handleReconnect);
     
     const handleOffer = async (data) => {
       console.log('Received offer from sender:', data.senderId);
@@ -135,6 +137,9 @@ const Receiver = () => {
     setupConnection();
 
     return () => {
+      socket.off('connect', handleConnect);
+      socket.off('disconnect', handleDisconnect);
+      socket.off('reconnect', handleReconnect);
       socket.off('offer', handleOffer);
       socket.off('candidate', handleCandidate);
       socket.off('room-occupied', handleRoomOccupied);

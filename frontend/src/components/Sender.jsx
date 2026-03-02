@@ -83,9 +83,50 @@ const Sender = () => {
   const peersRef = useRef({});
   const dataChannelsRef = useRef({});
   const activeRoomsRef = useRef(new Set());
+  const activeSharesRef = useRef(new Map()); // mirrors activeShares for socket callbacks
   const workerRef = useRef(null);
 
   useEffect(() => { loadFileHistory(); checkUserLogin(); }, []);
+
+  // Keep ref in sync with state so socket handlers always see latest rooms
+  useEffect(() => { activeSharesRef.current = activeShares; }, [activeShares]);
+
+  // Re-register all active rooms whenever the socket (re)connects.
+  // This covers: initial connect, tab throttle-induced disconnect, network blip.
+  useEffect(() => {
+    const reRegisterRooms = () => {
+      const shares = activeSharesRef.current;
+      if (!shares.size) return;
+      console.log(`[Socket reconnect] Re-registering ${shares.size} active room(s)`);
+      shares.forEach((shareInfo, roomId) => {
+        socket.emit('join', { roomId, role: 'sender' });
+        socket.emit('register-room', { roomId, shareMode: shareInfo.shareMode || 'single' });
+        if (shareInfo.password) {
+          socket.emit('register-otp', { otp: shareInfo.password, roomId });
+        }
+      });
+    };
+
+    socket.on('connect', reRegisterRooms);
+
+    // Visibility change: when the user switches back to this tab, ensure the
+    // socket is connected and rooms are re-registered (handles browser tab throttling).
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        if (!socket.connected) {
+          socket.connect();
+        } else {
+          reRegisterRooms();
+        }
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+
+    return () => {
+      socket.off('connect', reRegisterRooms);
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
+  }, []);
 
   useEffect(() => {
     const handleLoggedOut = () => {
@@ -518,7 +559,7 @@ const Sender = () => {
                   </button>
                   <p className="mt-2 text-xs text-blue-600">Receiver enters this code at <span className="font-mono font-semibold">/receive</span></p>
                 </div>
-                <div><label className="block text-sm font-medium text-gray-700 mb-2">Share Link</label><div className="flex"><input type="text" value={link} readOnly className="flex-1 rounded-l-md border border-gray-300 bg-gray-50 px-3 py-2 text-sm" /><button onClick={()=>copy(link,'link')} className="rounded-r-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700">{copied.link?'Copied!':'Copy'}</button></div></div>
+                <div><label className="block text-sm font-medium text-gray-700 mb-2">Share Link</label><div className="flex"><input type="text" value={link} readOnly className="flex-1 rounded-l-md border border-gray-300 bg-gray-50 px-3 py-2 text-sm" /><a href={link} target="_blank" rel="noopener noreferrer" className="rounded-none border-t border-b border-gray-300 bg-white px-3 py-2 text-sm font-semibold text-blue-600 hover:bg-gray-50 flex items-center" title="Open link in new tab">Open</a><button onClick={()=>copy(link,'link')} className="rounded-r-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700">{copied.link?'Copied!':'Copy'}</button></div></div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">QR Code (includes password)</label>
                   <div className="flex flex-col items-center space-y-3 p-4 border border-gray-200 rounded-lg bg-gray-50">
@@ -731,13 +772,23 @@ const Sender = () => {
                           <td className="px-3 py-2 text-gray-700">{item.createdAt ? new Date(item.createdAt).toLocaleString() : ''}</td>
                           <td className="px-3 py-2">
                             <div className="flex flex-wrap gap-2">
+                              <a
+                                href={linkWithPassword}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center justify-center rounded-md border border-gray-300 bg-white p-1.5 text-blue-600 hover:bg-gray-50"
+                                title="Open receiver link"
+                                aria-label="Open receiver link"
+                              >
+                                <LinkIcon className="h-4 w-4" />
+                              </a>
                               <button
                                 onClick={() => { navigator.clipboard.writeText(linkWithPassword).then(()=>{ setHistoryToast('Link copied'); setTimeout(()=>setHistoryToast(''), 1200); }); }}
                                 className="inline-flex items-center justify-center rounded-md border border-gray-300 bg-white p-1.5 text-gray-700 hover:bg-gray-50"
                                 title="Copy password link"
                                 aria-label="Copy password link"
                               >
-                                <LinkIcon className="h-4 w-4" />
+                                <Copy className="h-4 w-4" />
                               </button>
                               {item.password && (
                                 <button

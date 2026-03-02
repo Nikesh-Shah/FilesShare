@@ -18,7 +18,8 @@ const Homepage = () => {
           </div>
           <div className="flex gap-3">
             <a
-              href="/"
+              href="#sender-section"
+              onClick={e => { e.preventDefault(); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
               className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 transition"
             >
               ↑ Send
