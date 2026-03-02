@@ -7,9 +7,6 @@ import multer from 'multer';
 import fs from 'fs-extra';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import crypto from 'crypto';
-import User from './model/user.js';
-import FileShare from './model/FileShare.js';
 import connectDB from './db.js';
 import authRoutes from './routes/authRoutes.js';
 import fileShareRoutes from './routes/fileShareRoutes.js';
@@ -54,7 +51,7 @@ const staticAllowedOrigins = [
   'http://localhost:5173',
   'http://localhost:3001',
   'http://localhost:5000',
-  'https://localhost:5173', // in case HTTPS local proxy is used
+  'https://localhost:5173', 
 ];
 
 if (process.env.CORS_ORIGIN) {
@@ -89,8 +86,10 @@ app.use('/api/fileshare', fileShareRoutes);
 
 // Serve static files from the frontend build
 
-// Connect to MongoDB
-connectDB();
+// Connect to MongoDB (non-fatal — server starts even if DB is unavailable)
+connectDB().catch(err => {
+  console.warn('MongoDB unavailable — continuing without database:', err.message);
+});
 
 // HTTP Upload endpoints for fast transfer (non-private)
 app.post('/api/upload/chunk', upload.single('chunk'), async (req, res) => {
