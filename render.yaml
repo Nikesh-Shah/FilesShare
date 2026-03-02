@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: filesharing-backend
+    env: node
+    rootDir: backend
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: MONGO_URI
+        sync: false        # set this manually in Render dashboard
+      - key: JWT_SECRET
+        sync: false        # set this manually in Render dashboard
+      - key: JWT_EXPIRATION
+        value: 1h
+      - key: CORS_ORIGIN
+        sync: false        # set to your Vercel frontend URL

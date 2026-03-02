@@ -1,0 +1,23 @@
+# Dependencies
+node_modules/
+
+# Environment files (never commit secrets)
+.env
+.env.local
+.env.production
+
+# Frontend build output
+frontend/dist/
+
+# Uploaded files (ephemeral on free hosting)
+backend/uploads/temp/
+backend/uploads/downloads/
+backend/uploads/*_chunk_*
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
