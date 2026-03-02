@@ -62,6 +62,10 @@ const corsOrigin = (origin, callback) => {
   if (baseAllowSet.has(origin)) return callback(null, true);
   // Allow any Azure dev tunnel style domain
   if (/\.devtunnels\.ms$/i.test(origin)) return callback(null, true);
+  // Allow Netlify deployments
+  if (/\.netlify\.app$/i.test(origin)) return callback(null, true);
+  // Allow Vercel deployments
+  if (/\.vercel\.app$/i.test(origin)) return callback(null, true);
   // Allow any GitHub Codespaces like patterns (optional future use)
   if (/githubpreview\.dev$/i.test(origin)) return callback(null, true);
   return callback(new Error(`Not allowed by CORS: ${origin}`));
