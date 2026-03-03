@@ -4,6 +4,7 @@ import { useParams, useLocation } from 'react-router-dom';
 import { AlertCircle, CheckCircle2, Download } from 'lucide-react';
 import Nav from './Nav';
 import { checkDownloadPermission } from '../api/api';
+import { getRtcConfig } from '../utils/iceConfig';
 
 const socket = io(import.meta.env.VITE_API_URL );
 
@@ -259,41 +260,28 @@ const Receiver = () => {
     uiRafIdRef.current = 0;
   };
 
-  const setupConnection = () => {
+  const setupConnection = async () => {
     console.log('Setting up WebRTC connection for room:', roomId);
     
-    // Configure WebRTC with STUN + TURN for reliable NAT traversal in production
-    const rtcConfig = {
-      iceServers: [
-        { urls: 'stun:stun.l.google.com:19302' },
-        { urls: 'stun:stun1.l.google.com:19302' },
-        { urls: 'stun:stun2.l.google.com:19302' },
-        { urls: 'stun:stun3.l.google.com:19302' },
-        { urls: 'stun:stun4.l.google.com:19302' },
-        // Free TURN relay — required for symmetric NAT (mobile / corporate networks)
-        {
-          urls: 'turn:openrelay.metered.ca:80',
-          username: 'openrelayproject',
-          credential: 'openrelayproject'
-        },
-        {
-          urls: 'turn:openrelay.metered.ca:443',
-          username: 'openrelayproject',
-          credential: 'openrelayproject'
-        },
-        {
-          urls: 'turn:openrelay.metered.ca:443?transport=tcp',
-          username: 'openrelayproject',
-          credential: 'openrelayproject'
-        }
-      ],
-      iceCandidatePoolSize: 10,
-      bundlePolicy: 'max-bundle',
-      rtcpMuxPolicy: 'require'
-    };
+    // Fetch TURN credentials from backend for reliable cross-network NAT traversal
+    const rtcConfig = await getRtcConfig();
     
     console.log('Creating RTCPeerConnection with config:', rtcConfig);
     peerRef.current = new RTCPeerConnection(rtcConfig);
+
+    // Monitor ICE connection state for cross-network debugging & auto-restart
+    peerRef.current.oniceconnectionstatechange = () => {
+      const state = peerRef.current.iceConnectionState;
+      console.log(`[ICE] Receiver connection state: ${state}`);
+      if (state === 'failed') {
+        console.warn('[ICE] Connection failed — the TURN relay may be unavailable');
+        setStatus('Connection failed. Please check your network or try again.');
+      } else if (state === 'disconnected') {
+        setStatus('Connection interrupted. Waiting for recovery...');
+      } else if (state === 'connected' || state === 'completed') {
+        console.log('[ICE] Peer connected successfully');
+      }
+    };
 
     peerRef.current.onicecandidate = (e) => {
       if (e.candidate) {
