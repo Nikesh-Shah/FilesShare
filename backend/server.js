@@ -10,8 +10,10 @@ import { fileURLToPath } from 'url';
 import connectDB from './db.js';
 import authRoutes from './routes/authRoutes.js';
 import fileShareRoutes from './routes/fileShareRoutes.js';
+import adminRoutes from './routes/adminRoutes.js';
 import { setIoInstance } from './controller/fileShareController.js';
 import { otpRoomMap } from './otpStore.js';
+import { seedDefaultAdmin } from './seedAdmin.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -79,6 +81,7 @@ app.use(express.json({ limit: '50mb' }));
 app.use(express.raw({ type: 'application/octet-stream', limit: '50mb' }));
 app.use('/api/auth', authRoutes);
 app.use('/api/fileshare', fileShareRoutes);
+app.use('/api/admin', adminRoutes);
 
 // Health check / keep-alive route for cron jobs
 app.get('/', (req, res) => {
@@ -162,9 +165,11 @@ app.get('/api/ice-servers', async (_req, res) => {
 // Serve static files from the frontend build
 
 // Connect to MongoDB (non-fatal — server starts even if DB is unavailable)
-connectDB().catch(err => {
-  console.warn('MongoDB unavailable — continuing without database:', err.message);
-});
+connectDB()
+  .then(() => seedDefaultAdmin())
+  .catch(err => {
+    console.warn('MongoDB unavailable — continuing without database:', err.message);
+  });
 
 // HTTP Upload endpoints for fast transfer (non-private)
 app.post('/api/upload/chunk', upload.single('chunk'), async (req, res) => {
