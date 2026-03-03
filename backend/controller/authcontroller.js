@@ -2,10 +2,29 @@ import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import User from '../model/user.js'; 
 
+/**
+ * Helper: extract client IP from request (handles proxies like Render / Netlify)
+ */
+const getClientIp = (req) => {
+    const forwarded = req.headers['x-forwarded-for'];
+    if (forwarded) return forwarded.split(',')[0].trim();
+    return req.socket?.remoteAddress || req.ip || 'unknown';
+};
+
 export const register = async (req, res) => {
     const { email, password } = req.body;
 
     try {
+        // Block registration of admin accounts
+        // Admin is seeded at startup — never created through the API
+        const existingAdmin = await User.findOne({ email, role: 'admin' });
+        if (existingAdmin) {
+            return res.status(403).json({
+                message: 'This account cannot be registered.',
+                error: 'Forbidden'
+            });
+        }
+
         // Check if user already exists
         const existingUser = await User.findOne({ email });
         if (existingUser) {
@@ -18,8 +37,14 @@ export const register = async (req, res) => {
         // Hash the password
         const hashedPassword = await bcrypt.hash(password, 10);
 
-        // Create new user
-        const user = await User.create({ email, password: hashedPassword });
+        // Create new user — always role 'user'
+        const user = await User.create({
+            email,
+            password: hashedPassword,
+            role: 'user',
+            registrationIp: getClientIp(req),
+            userAgent: req.headers['user-agent'] || null,
+        });
 
         res.status(201).json({ 
             message: 'Account created successfully! You can now log in with your credentials.',
@@ -45,6 +70,14 @@ export const register = async (req, res) => {
                 });
             }
 
+            // Check if user is active
+            if (!user.isActive) {
+                return res.status(403).json({
+                    message: 'This account has been deactivated. Please contact support.',
+                    error: 'Account deactivated'
+                });
+            }
+
             // Compare passwords
             const isMatch = await bcrypt.compare(password, user.password);
             if (!isMatch) {
@@ -54,12 +87,24 @@ export const register = async (req, res) => {
                 });
             }
 
-            // Generate JWT token
-            const token = jwt.sign({ userId: user._id }, process.env.JWT_SECRET, { expiresIn: process.env.JWT_EXPIRATION });
+            // Update login metadata
+            user.lastLoginAt = new Date();
+            user.lastLoginIp = getClientIp(req);
+            user.userAgent = req.headers['user-agent'] || user.userAgent;
+            user.loginCount = (user.loginCount || 0) + 1;
+            await user.save();
+
+            // Generate JWT token — include role
+            const token = jwt.sign(
+                { userId: user._id, role: user.role },
+                process.env.JWT_SECRET,
+                { expiresIn: process.env.JWT_EXPIRATION }
+            );
 
             res.status(200).json({ 
                 message: 'Welcome back! Login successful.',
-                token 
+                token,
+                role: user.role,
             });
         } catch (error) {
             console.error('Login error:', error);
