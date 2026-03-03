@@ -8,6 +8,7 @@ import Nav from './Nav';
 import { createFileShare, getFileShares, toggleDownloadPermission, deleteFileShare, deleteAllFileShares, updateFileShareStatus } from '../api/api';
 import { Trash2, Link as LinkIcon, KeyRound, QrCode, CheckCircle2, Clock, Circle } from 'lucide-react';
 import { createRoot } from 'react-dom/client';
+import { getRtcConfig, prefetchIceConfig } from '../utils/iceConfig';
 
 if (typeof window !== 'undefined' && window.CanvasRenderingContext2D && !CanvasRenderingContext2D.prototype.roundRect) {
   CanvasRenderingContext2D.prototype.roundRect = function(x, y, width, height, radii) {
@@ -86,7 +87,7 @@ const Sender = () => {
   const activeSharesRef = useRef(new Map()); // mirrors activeShares for socket callbacks
   const workerRef = useRef(null);
 
-  useEffect(() => { loadFileHistory(); checkUserLogin(); }, []);
+  useEffect(() => { loadFileHistory(); checkUserLogin(); prefetchIceConfig(); }, []);
 
   // Keep ref in sync with state so socket handlers always see latest rooms
   useEffect(() => { activeSharesRef.current = activeShares; }, [activeShares]);
@@ -405,10 +406,11 @@ const Sender = () => {
       // Mark as in-progress as soon as a receiver joins
       try { setHistoryStatus(prev => { const m = new Map(prev); m.set(receiverRoomId, 'in-progress'); return m; }); } catch {}
       try { updateFileShareStatus && updateFileShareStatus(receiverRoomId, 'in-progress').catch(()=>{}); } catch {}
+      // Fetch TURN credentials before creating peer connection
+      const rtcConfig = await getRtcConfig();
       setActiveShares(currentShares => {
         const shareInfo = currentShares.get(receiverRoomId);
         if (!shareInfo) { console.log(`No active share found for room ${receiverRoomId}`); return currentShares; }
-        const rtcConfig = { iceServers: [ { urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun1.l.google.com:19302' }, { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' }, { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' }, { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' } ], iceCandidatePoolSize: 0, bundlePolicy: 'max-bundle', rtcpMuxPolicy: 'require', iceTransportPolicy: 'all', sdpSemantics: 'unified-plan' };
     const peer = new RTCPeerConnection(rtcConfig);
   let dataChannel; let channelList = [];
   { const ch = peer.createDataChannel('fileTransfer', { ordered:true }); try { ch.bufferedAmountLowThreshold = 512 * 1024; } catch(_){} try { ch.binaryType = 'arraybuffer'; } catch(_){} channelList.push(ch); dataChannel = ch; }
@@ -447,6 +449,23 @@ const Sender = () => {
               sendNext();
             } else { if (dataChannel.readyState==='open'){ dataChannel.send(JSON.stringify({ type:'password-result', success:false })); } } } } };
         peer.onicecandidate = (event)=>{ if(event.candidate){ socket.emit('candidate',{ candidate:event.candidate, roomId:receiverRoomId, targetId:userId }); } };
+        // Monitor ICE connection state for cross-network debugging & auto-restart
+        peer.oniceconnectionstatechange = () => {
+          const state = peer.iceConnectionState;
+          console.log(`[ICE] Connection state for ${receiverRoomId}: ${state}`);
+          if (state === 'failed') {
+            console.warn('[ICE] Connection failed — attempting ICE restart');
+            setStatus('Connection failed. Retrying...');
+            peer.createOffer({ iceRestart: true }).then(offer => {
+              peer.setLocalDescription(offer);
+              socket.emit('offer', { offer, roomId: receiverRoomId, targetId: userId });
+            }).catch(err => console.error('[ICE] Restart error:', err));
+          } else if (state === 'disconnected') {
+            setStatus('Connection interrupted. Waiting for recovery...');
+          } else if (state === 'connected' || state === 'completed') {
+            console.log('[ICE] Peer connected successfully');
+          }
+        };
         const createOffer = async () => { try { const offer = await peer.createOffer({ offerToReceiveAudio:false, offerToReceiveVideo:false, iceRestart:false }); await peer.setLocalDescription(offer); socket.emit('offer',{ offer, roomId:receiverRoomId, targetId:userId }); console.log(`Offer sent to ${userId}`); } catch(err){ console.error('Error creating offer:', err); } };
         createOffer();
         return currentShares;
