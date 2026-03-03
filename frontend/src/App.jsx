@@ -10,6 +10,8 @@ import Homepage from './pages/Homepage';
 import FAQ from './components/FAQ';
 import About from './components/About';
 import ReceiveLanding from './pages/ReceiveLanding';
+import AdminPanel from './components/AdminPanel';
+import ProtectedAdminRoute from './components/ProtectedAdminRoute';
 const App = () => {
   return (
 
@@ -24,6 +26,14 @@ const App = () => {
         <Route path="/" element={<Homepage />} />
         <Route path="/faq" element={<FAQ />} />
         <Route path="/about" element={<About />} />
+        <Route
+          path="/admin"
+          element={
+            <ProtectedAdminRoute>
+              <AdminPanel />
+            </ProtectedAdminRoute>
+          }
+        />
       </Routes>
     </Router>
   )
