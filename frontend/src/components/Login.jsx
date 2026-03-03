@@ -36,15 +36,22 @@ const Login = () => {
   if (rememberMe) {
         localStorage.setItem('token', res.data.token);
         localStorage.setItem('email', form.email);
+        if (res.data.role) localStorage.setItem('role', res.data.role);
       } else {
         sessionStorage.setItem('token', res.data.token);
         sessionStorage.setItem('email', form.email);
+        if (res.data.role) sessionStorage.setItem('role', res.data.role);
       }
 
   // Notify app of login
   window.dispatchEvent(new Event('userLogin'))
 
-      navigate('/');
+      // Redirect admins to admin panel, regular users to home
+      if (res.data.role === 'admin') {
+        navigate('/admin');
+      } else {
+        navigate('/');
+      }
     } catch (err) {
       const errorMessage =
         err.response?.data?.message || err.response?.data?.error || err.message || 'Login failed. Please check your internet connection and try again.';
