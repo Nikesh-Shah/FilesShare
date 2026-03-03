@@ -86,6 +86,79 @@ app.get('/', (req, res) => {
 });
 app.get('/ping', (req, res) => res.send('pong'));
 
+// ─── ICE / TURN credentials endpoint ────────────────────────────────
+// Returns STUN + TURN servers the frontend uses for RTCPeerConnection.
+// Supports two config modes (set via env vars):
+//   1) Metered.ca free tier → METERED_API_KEY
+//   2) Custom TURN server   → TURN_URL, TURN_USERNAME, TURN_CREDENTIAL
+let cachedIceServers = null;
+let iceCacheExpiry = 0;
+
+app.get('/api/ice-servers', async (_req, res) => {
+  try {
+    // Return cached if still valid
+    if (cachedIceServers && Date.now() < iceCacheExpiry) {
+      return res.json({ iceServers: cachedIceServers });
+    }
+
+    const iceServers = [];
+
+    // ── Option 1: Metered.ca free TURN API ──
+    const meteredKey = process.env.METERED_API_KEY;
+    const meteredApp = process.env.METERED_APP_NAME || 'filesharing';
+    if (meteredKey) {
+      try {
+        const meteredRes = await fetch(
+          `https://${meteredApp}.metered.live/api/v1/turn/credentials?apiKey=${meteredKey}`
+        );
+        if (meteredRes.ok) {
+          const servers = await meteredRes.json();
+          iceServers.push(...servers);
+          console.log('[ICE] Fetched Metered TURN credentials:', servers.length, 'entries');
+        } else {
+          console.warn('[ICE] Metered API returned', meteredRes.status);
+        }
+      } catch (err) {
+        console.warn('[ICE] Metered API error:', err.message);
+      }
+    }
+
+    // ── Option 2: Custom TURN server from env ──
+    const turnUrl = process.env.TURN_URL;
+    const turnUser = process.env.TURN_USERNAME;
+    const turnCred = process.env.TURN_CREDENTIAL;
+    if (turnUrl && turnUser && turnCred) {
+      // Support comma-separated URLs (e.g. turn:host:3478,turns:host:5349)
+      const urls = turnUrl.split(',').map(u => u.trim()).filter(Boolean);
+      iceServers.push({
+        urls,
+        username: turnUser,
+        credential: turnCred,
+      });
+      // Also add TCP transport variant if only UDP was given
+      if (urls.length === 1 && !urls[0].includes('transport=')) {
+        iceServers.push({
+          urls: `${urls[0]}?transport=tcp`,
+          username: turnUser,
+          credential: turnCred,
+        });
+      }
+      console.log('[ICE] Using custom TURN server:', urls);
+    }
+
+    // Cache for 1 hour (Metered credentials are valid for 24h)
+    if (iceServers.length > 0) {
+      cachedIceServers = iceServers;
+      iceCacheExpiry = Date.now() + 3600_000;
+    }
+
+    return res.json({ iceServers });
+  } catch (err) {
+    console.error('[ICE] Error building ICE config:', err);
+    return res.json({ iceServers: [] });
+  }
+});
+
 // Serve static files from the frontend build
 
 // Connect to MongoDB (non-fatal — server starts even if DB is unavailable)
