@@ -51,3 +51,10 @@ export const checkDownloadPermission = (roomId) => api.get(`/fileshare/download-
 export const deleteFileShare = (roomId) => api.delete(`/fileshare/delete/${roomId}`);
 export const deleteAllFileShares = (senderEmail) => api.delete(`/fileshare/delete-all/${senderEmail}`);
 export const getRoomByOtp = (otp) => api.get(`/fileshare/by-otp/${otp}`);
+
+// Admin APIs
+export const adminGetStats = () => api.get('/admin/stats');
+export const adminGetUsers = () => api.get('/admin/users');
+export const adminGetUser = (id) => api.get(`/admin/users/${id}`);
+export const adminToggleUserActive = (id) => api.put(`/admin/users/${id}/toggle-active`);
+export const adminDeleteUser = (id) => api.delete(`/admin/users/${id}`);
