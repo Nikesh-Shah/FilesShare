@@ -296,39 +296,35 @@ const Receiver = () => {
       }
     };
 
+    // ── Multi-channel receiver: collect all data channels from sender ──
+    let controlChannel = null;
+    let allChannels = [];
+    let channelOpenCount = 0;
+    let passwordSent = false;
+
     peerRef.current.ondatachannel = (e) => {
-      console.log('Data channel received:', e.channel);
       const channel = e.channel;
+      console.log('Data channel received:', channel.label);
       try { channel.binaryType = 'arraybuffer'; } catch (_) {}
+      allChannels.push(channel);
 
-      // Auto-password if present
-      if (urlPassword) {
-        setStatus('Connected. Verifying password from QR code...');
-        setShowPasswordForm(false);
-        setTimeout(() => {
-          channel.send(JSON.stringify({ type: 'password', password: urlPassword }));
-        }, 100);
-      } else {
-        setStatus('Connected. Password required to access file.');
-        setShowPasswordForm(true);
-      }
+      // The first channel (fileTransfer) is the control channel
+      const isControl = channel.label === 'fileTransfer';
+      if (isControl) controlChannel = channel;
 
+      // ── Binary data handler (shared across all channels) ──
       channel.onmessage = (event) => {
         if (typeof event.data === 'string') {
-          // Fast path for simple END legacy
-          if (event.data === 'END') {
-            // Legacy END without metadata JSON (unlikely with current sender)
-            finalizeIfPossible();
-            return;
-          }
+          // Only control channel receives string messages
+          if (!isControl) return;
+
+          if (event.data === 'END') { finalizeIfPossible(); return; }
           let msg;
           try { msg = JSON.parse(event.data); } catch { msg = null; }
           if (msg) {
             if (msg.type === 'metadata') {
-              // Initialize reception state
               fileMetadataRef.current = msg;
               setFileMetadata(msg);
-              // no encryption flags
               receivedBuffers.current = [];
               receivedSeqSetRef.current = new Set();
               highestSeqRef.current = -1;
@@ -340,16 +336,12 @@ const Receiver = () => {
               return;
             }
             if (msg.type === 'FILE_END') {
-              // End-of-file signal already handled by data completion path; reset for next file
               receivedBuffers.current = [];
               receivedBytesRef.current = 0;
               setProgressPct(0);
               return;
             }
-            if (msg.type === 'ALL_DONE') {
-              setStatus('All files received.');
-              return;
-            }
+            if (msg.type === 'ALL_DONE') { setStatus('All files received.'); return; }
             if (msg.type === 'TEXT_PAYLOAD') {
               setReceivedText(msg.text || '');
               setTextLanguage(msg.language || 'plain');
@@ -365,132 +357,91 @@ const Receiver = () => {
               return;
             }
             if (msg.type === 'END') {
-              // Sender indicates end; perform final gap check if speed mode
               endSequenceRef.current = msg.totalSeq || null;
               attemptFinalize();
               return;
             }
-            if (msg.type === 'DONE') {
-              // Resend cycle finished; try finalize again
-              attemptFinalize();
-              return;
-            }
+            if (msg.type === 'DONE') { attemptFinalize(); return; }
           }
         } else if (event.data instanceof ArrayBuffer) {
-          // Binary data (may include 4-byte sequence header in speed mode)
-            receivedBuffers.current.push(event.data);
-            receivedBytesRef.current += event.data.byteLength;
+          // Fast binary path — push directly, skip any processing
+          receivedBuffers.current.push(event.data);
+          receivedBytesRef.current += event.data.byteLength;
         }
-      };
-
-      // Helpers added after onmessage
-      const endSequenceRef = { current: null };
-
-      const sendAck = (upTo) => {
-        if (!speedModeActiveRef.current) return;
-        if (upTo <= lastAckSentRef.current) return;
-        if (channel.readyState !== 'open') return;
-        try {
-          channel.send(JSON.stringify({ type: 'ACK', upTo }));
-          lastAckSentRef.current = upTo;
-        } catch (_) {}
-      };
-
-      const scheduleAck = () => {
-        if (!speedModeActiveRef.current) return;
-        if (ackTimerRef.current) return;
-        ackTimerRef.current = setTimeout(() => {
-          ackTimerRef.current = null;
-          sendAck(highestContiguousRef.current);
-        }, 50); 
-      };
-
-  const finalizeIfPossible = async () => {
-        const currentMetadata = fileMetadataRef.current || fileMetadata;
-        if (!currentMetadata) return;
-
-        if (speedModeActiveRef.current && endSequenceRef.current != null) {
-          const expected = endSequenceRef.current;
-            for (let i = 0; i < expected; i++) {
-              if (!receivedChunksRef.current.has(i)) {
-                return; // wait until missing are fetched
-            }
-          }
-        }
-
-  let blob;
-        if (speedModeActiveRef.current) {
-          const totalSeq = endSequenceRef.current != null ? endSequenceRef.current : (highestSeqRef.current + 1);
-          const ordered = new Array(totalSeq);
-          let totalBytes = 0;
-          for (let i = 0; i < totalSeq; i++) {
-            const part = receivedChunksRef.current.get(i);
-            if (!part) return; // still missing
-            const arr = new Uint8Array(part);
-            ordered[i] = arr;
-            totalBytes += arr.byteLength;
-          }
-          const merged = new Uint8Array(totalBytes);
-          let offset = 0;
-          for (let i = 0; i < ordered.length; i++) { const arr = ordered[i]; merged.set(arr, offset); offset += arr.byteLength; }
-          blob = new Blob([merged], { type: currentMetadata?.fileType || 'application/octet-stream' });
-        } else {
-          blob = new Blob(receivedBuffers.current, { type: currentMetadata?.fileType || 'application/octet-stream' });
-        }
-
-  const totalSize = currentMetadata?.size ? ` (${formatBytes(currentMetadata.size)})` : '';
-  setStatus(`File download completed${totalSize}. Ready to save.`);
-        const url = URL.createObjectURL(blob);
-        setDownloadLink(url);
-        setDownloadLinks(prev => [...prev, { url, name: currentMetadata?.name || `file-${Date.now()}` }]);
-        setProgressPct(100);
-      };
-
-      const attemptFinalize = () => {
-        // Ordered reliable channel: no missing-chunk logic needed
-        finalizeIfPossible();
       };
 
       channel.onopen = () => {
-  speedModeActiveRef.current = false;
-        console.log('📡 Receiver data channel opened successfully');
-        setStatus('Data channel connected. Waiting for file transfer...');
-        try { channel.bufferedAmountLowThreshold = 0; } catch (_) {}
-  // No missing-gap timer needed for ordered channel
+        channelOpenCount++;
+        console.log(`📡 Data channel opened: ${channel.label} (${channelOpenCount}/${allChannels.length})`);
+
+        if (isControl) {
+          speedModeActiveRef.current = false;
+          setStatus('Data channel connected. Waiting for file transfer...');
+          try { channel.bufferedAmountLowThreshold = 0; } catch (_) {}
+          pendingDataChannel.current = channel;
+
+          // Send password once control channel is open
+          if (!passwordSent) {
+            if (urlPassword) {
+              passwordSent = true;
+              setStatus('Connected. Verifying password from QR code...');
+              setShowPasswordForm(false);
+              setTimeout(() => {
+                channel.send(JSON.stringify({ type: 'password', password: urlPassword }));
+              }, 100);
+            } else {
+              setStatus('Connected. Password required to access file.');
+              setShowPasswordForm(true);
+            }
+          }
+        }
       };
 
       channel.onclose = () => {
         if (missingCheckTimerRef.current) clearInterval(missingCheckTimerRef.current);
-        console.log('📡 Receiver data channel closed');
-        stopUiLoop();
-        if (receivedBytesRef.current === 0) {
-          setStatus('Connection closed before file transfer started. Please try again.');
-        } else {
-          const currentMetadata = fileMetadataRef.current || fileMetadata;
-          const expectedSize = currentMetadata?.size || 0;
-          if (receivedBytesRef.current < expectedSize) {
-            setStatus(`Connection lost during transfer. Received ${formatBytes(receivedBytesRef.current)} of ${formatBytes(expectedSize)}.`);
+        console.log(`📡 Data channel closed: ${channel.label}`);
+        if (isControl) {
+          stopUiLoop();
+          if (receivedBytesRef.current === 0) {
+            setStatus('Connection closed before file transfer started. Please try again.');
+          } else {
+            const currentMetadata = fileMetadataRef.current || fileMetadata;
+            const expectedSize = currentMetadata?.size || 0;
+            if (receivedBytesRef.current < expectedSize) {
+              setStatus(`Connection lost during transfer. Received ${formatBytes(receivedBytesRef.current)} of ${formatBytes(expectedSize)}.`);
+            }
           }
         }
       };
 
       channel.onerror = (error) => {
-        console.error('📡 Receiver data channel error:', error);
-        setStatus('Data channel error occurred. Please refresh and try again.');
+        console.error(`📡 Data channel error (${channel.label}):`, error);
+        if (isControl) setStatus('Data channel error occurred. Please refresh and try again.');
       };
-
-      const monitorConnection = () => {
-        if (channel.readyState === 'open') {
-          console.log(`📊 Data channel state: ${channel.readyState}`);
-        } else if (channel.readyState === 'closed' || channel.readyState === 'closing') {
-          console.warn(`⚠️ Data channel state changed to: ${channel.readyState}`);
-        }
-      };
-      const connectionMonitor = setInterval(monitorConnection, 10000);
-      channel.addEventListener('close', () => clearInterval(connectionMonitor));
-
-      pendingDataChannel.current = channel;
     };
+
+    // ── Shared helpers (closure-scoped, used across channels) ──
+    const endSequenceRef = { current: null };
+
+    const finalizeIfPossible = async () => {
+      const currentMetadata = fileMetadataRef.current || fileMetadata;
+      if (!currentMetadata) return;
+
+      // Build blob directly from buffer array — very fast even for large files
+      // because the browser internally references the same ArrayBuffers.
+      const blob = new Blob(receivedBuffers.current, {
+        type: currentMetadata?.fileType || 'application/octet-stream',
+      });
+
+      const totalSize = currentMetadata?.size ? ` (${formatBytes(currentMetadata.size)})` : '';
+      setStatus(`File download completed${totalSize}. Ready to save.`);
+      const url = URL.createObjectURL(blob);
+      setDownloadLink(url);
+      setDownloadLinks(prev => [...prev, { url, name: currentMetadata?.name || `file-${Date.now()}` }]);
+      setProgressPct(100);
+    };
+
+    const attemptFinalize = () => { finalizeIfPossible(); };
 
     console.log('Emitting join event to server...');
     socket.emit('join', { roomId, role: 'receiver' });

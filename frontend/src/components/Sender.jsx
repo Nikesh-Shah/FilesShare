@@ -224,15 +224,15 @@ const Sender = () => {
       let sentBytes = 0;
       const fileSize = file.size;
       const startTime = performance.now();
-  let chunkSize = 64 * 1024; 
-  let maxChunkCap = 256 * 1024; 
-  const minChunk = 32 * 1024; 
-  let MAX_BUFFERED_AMOUNT = 12 * 1024 * 1024; 
+  // ── Pro-level tunables ──
+  // Start larger, cap higher — the adaptive loop will shrink if relay/WAN
+  let chunkSize = 256 * 1024;            // 256 KB initial
+  let maxChunkCap = 1024 * 1024;         // 1 MB cap (LAN can go higher)
+  const minChunk = 64 * 1024;            // 64 KB floor
+  let MAX_BUFFERED_AMOUNT = 16 * 1024 * 1024; // 16 MB (scales per profile)
       let workerPaused = false;
-      let lastAdapt = startTime;
-      const speedWindow = [];
       let ended = false;
-  console.debug('[TUNING] params', { initialChunk: chunkSize, maxChunkCap });
+  console.debug('[TUNING] params', { initialChunk: chunkSize, maxChunkCap, channels: channels.length });
       const updateProgress = () => {
         const now = performance.now();
         if (now - (updateProgress.last || 0) < 250) return;
@@ -308,7 +308,8 @@ const Sender = () => {
     if (workerPaused && clear) { workerPaused = false; try { workerRef.current.postMessage({ cmd: 'resume' }); } catch {} }
   };
   channels.forEach(ch => { try { if (!ch.bufferedAmountLowThreshold) ch.bufferedAmountLowThreshold = 256 * 1024; ch.onbufferedamountlow = () => { flushQueues(); resumeIfClear(); }; } catch {} });
-      const finalize = (totalSeq) => {
+      let flushTimer = null;
+      const finalize = () => {
         if (ended) return;
         ended = true;
   const endMsg = { type: 'END', totalBytes: fileSize };
@@ -321,7 +322,7 @@ const Sender = () => {
   // Signal end of this file only; outer controller will decide next or all done
   try { controlChannel.send(JSON.stringify({ type:'FILE_END', name: file.name, size: fileSize })); } catch {}
   try { onDone && onDone(); } catch {}
-        clearInterval(statsTimer); clearInterval(instantTimer); clearInterval(windowAdjustTimer); clearInterval(pcStatsTimer); try { clearInterval(flushTimer); } catch {}
+        clearInterval(statsTimer); clearInterval(instantTimer); clearInterval(windowAdjustTimer); clearInterval(pcStatsTimer); if (flushTimer) clearInterval(flushTimer);
       };
       const statsTimer = setInterval(() => {
         const elapsed = (performance.now() - startTime) / 1000;
@@ -337,11 +338,12 @@ const Sender = () => {
         if (deltaTime > 0) {
           const instBps = deltaBytes / deltaTime; const instMbps = (instBps * 8) / 1_000_000;
           const maxBuf = channels.reduce((m, c) => Math.max(m, c.bufferedAmount), 0);
-          console.debug(`[SPEED-INST] ${(instBps / 1024 / 1024).toFixed(2)} MB/s (${instMbps.toFixed(2)} Mbps) bufMax=${maxBuf} chunk=${(chunkSize / 1024)}KB`);
+          console.debug(`[SPEED-INST] ${(instBps / 1024 / 1024).toFixed(2)} MB/s (${instMbps.toFixed(2)} Mbps) bufMax=${maxBuf} chunk=${(chunkSize / 1024)}KB chans=${channels.length}`);
         }
-        lastSampleBytes = sentBytes; lastSampleTime = now;11
+        lastSampleBytes = sentBytes; lastSampleTime = now;
       }, 1000);
   const windowAdjustTimer = setInterval(() => {  }, 5000);
+      // ── RTT-based adaptive profiling — polls every 1.5 s for faster reaction ──
       const pcStatsTimer = setInterval(async () => {
         if (!peer || peer.connectionState === 'closed') return;
         try {
@@ -362,32 +364,40 @@ const Sender = () => {
           }
           if (rtt != null) {
             lastRttMs = rtt * 1000;
-            // Profile logic
             const wasProfile = pathProfile;
             if (selectedType === 'relay') {
-              pathProfile = 'relay'; maxChunkCap = 128 * 1024; MAX_BUFFERED_AMOUNT = 6 * 1024 * 1024;
-            } else if (selectedType === 'host' || selectedType === 'srflx') {
-              if (lastRttMs < 20) { pathProfile = 'lan'; maxChunkCap = 1024 * 1024; MAX_BUFFERED_AMOUNT = 32 * 1024 * 1024; }
-              else { pathProfile = 'wan'; maxChunkCap = 512 * 1024; MAX_BUFFERED_AMOUNT = 12 * 1024 * 1024; }
+              // TURN relay — keep chunks small, buffer modest
+              pathProfile = 'relay'; maxChunkCap = 128 * 1024; MAX_BUFFERED_AMOUNT = 4 * 1024 * 1024;
+            } else if (selectedType === 'host' || selectedType === 'srflx' || selectedType === 'prflx') {
+              if (lastRttMs < 5) {
+                // Ultra-low latency LAN — max everything
+                pathProfile = 'lan'; maxChunkCap = 2 * 1024 * 1024; MAX_BUFFERED_AMOUNT = 64 * 1024 * 1024;
+              } else if (lastRttMs < 30) {
+                pathProfile = 'lan'; maxChunkCap = 1024 * 1024; MAX_BUFFERED_AMOUNT = 32 * 1024 * 1024;
+              } else {
+                pathProfile = 'wan'; maxChunkCap = 512 * 1024; MAX_BUFFERED_AMOUNT = 16 * 1024 * 1024;
+              }
             }
             if (pathProfile !== wasProfile) console.debug('[PROFILE]', { pathProfile, maxChunkCap, MAX_BUFFERED_AMOUNT });
-            // Early ramp on LAN
-            if (pathProfile === 'lan' && chunkSize < maxChunkCap) { chunkSize = Math.min(maxChunkCap, Math.max(chunkSize, 256 * 1024)); setThresholds(); }
+            // Aggressively ramp on LAN detection
+            if (pathProfile === 'lan' && chunkSize < maxChunkCap) {
+              chunkSize = Math.min(maxChunkCap, Math.max(chunkSize, 512 * 1024));
+              setThresholds();
+            }
             console.debug(`[PC] RTT ${lastRttMs.toFixed(1)}ms pairBytes ${(bytesSentPair / 1024 / 1024).toFixed(2)}MB type=${selectedType||'n/a'} profile=${pathProfile}`);
             adapt();
           }
         } catch { }
-      }, 3000);
+      }, 1500);
   {
   // Periodic queue flush and resume watchdog
-  const flushTimer = setInterval(() => { flushQueues(); resumeIfClear(); }, 200);
+  flushTimer = setInterval(() => { flushQueues(); resumeIfClear(); }, 200);
         const jobId = crypto.randomUUID();
         workerRef.current.onmessage = async (e) => {
           const { type, payload, error } = e.data;
           if (type === 'error') { setStatus(`Worker error: ${error}`); return; }
           if (type === 'start') { }
           if (type === 'chunk') {
-            const ch = controlChannel;
             const anyHigh = channels.some(c=>c.bufferedAmount > MAX_BUFFERED_AMOUNT);
             if (anyHigh && !workerPaused) { workerPaused = true; workerRef.current.postMessage({ cmd: 'pause' }); }
             sendStriped(payload, seqSent++);
@@ -412,14 +422,29 @@ const Sender = () => {
         const shareInfo = currentShares.get(receiverRoomId);
         if (!shareInfo) { console.log(`No active share found for room ${receiverRoomId}`); return currentShares; }
     const peer = new RTCPeerConnection(rtcConfig);
+  // ── Create multiple parallel data channels for maximum throughput ──
+  // Channel 0 = control + data, channels 1-3 = data-only (striped sends)
   let dataChannel; let channelList = [];
-  { const ch = peer.createDataChannel('fileTransfer', { ordered:true }); try { ch.bufferedAmountLowThreshold = 512 * 1024; } catch(_){} try { ch.binaryType = 'arraybuffer'; } catch(_){} channelList.push(ch); dataChannel = ch; }
+  const NUM_CHANNELS = 4;
+  for (let ci = 0; ci < NUM_CHANNELS; ci++) {
+    const label = ci === 0 ? 'fileTransfer' : `fileTransfer-${ci}`;
+    // ordered:true on channel 0 for control messages; ordered:false on extra
+    // channels for maximum throughput (order is handled by seq numbers)
+    const ch = peer.createDataChannel(label, {
+      ordered: ci === 0,
+      ...(ci > 0 ? { maxRetransmits: 3 } : {}),
+    });
+    try { ch.bufferedAmountLowThreshold = 512 * 1024; } catch(_){}
+    try { ch.binaryType = 'arraybuffer'; } catch(_){}
+    channelList.push(ch);
+    if (ci === 0) dataChannel = ch;
+  }
         peersRef.current[`${receiverRoomId}-${userId}`] = peer;
         dataChannelsRef.current[`${receiverRoomId}-${userId}`] = channelList;
         let opened=0; let errorCount=0; channelList.forEach((ch,idx)=>{ 
           ch.onopen=()=>{ if(++opened===channelList.length){ setStatus('Connection ready. Waiting for password...'); console.log(`All ${channelList.length} data channels opened for room ${receiverRoomId}`);} }; 
           ch.onclose=()=>{ console.log(`📡 DataChannel closed (${ch.label}) for room ${receiverRoomId}`); if(++errorCount >= channelList.length/2) { setStatus('Connection lost. Please refresh and try again.'); setProgress(0); } }; 
-          ch.onerror=(err)=>{ console.error(`📡 DataChannel error (${ch.label}):`, err); setStatus('Data channel send failed. Adjusting...'); chunkSize = Math.max(32*1024, Math.floor(chunkSize/2/1024)*1024); if(++errorCount >= channelList.length/2) { setStatus('Connection unstable. Please retry.'); } }; 
+          ch.onerror=(err)=>{ console.error(`📡 DataChannel error (${ch.label}):`, err); if(++errorCount >= channelList.length/2) { setStatus('Connection unstable. Please retry.'); } }; 
         });
   dataChannel.onmessage = (event) => { if (typeof event.data === 'string') { let message; try { message = JSON.parse(event.data); } catch { return; } if (message.type === 'password') { const si = activeShares.get(receiverRoomId) || shareInfo; if (message.password === si.password) {
               if (si.contentType === 'text') {
