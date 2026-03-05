@@ -216,7 +216,3 @@ Open [http://localhost:5173](http://localhost:5173)
 > The OTP map lives in server memory. If the backend restarts, active OTPs are cleared. A new share must be created.
 
 ---
-
-## License
-
-MIT
